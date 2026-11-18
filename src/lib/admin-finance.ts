@@ -1,0 +1,24 @@
+import {db} from '@/lib/db'
+export async function financialAccount(userId?:string){
+ const [payments,entries,bookings,groups,purchases,balances,payouts]=await Promise.all([
+ db.payment.findMany({where:userId?{userId}:{},orderBy:{createdAt:'desc'},include:{user:{select:{id:true,name:true,email:true,role:true}}}}),
+ db.ledgerEntry.findMany({where:userId?{userId}:{},orderBy:{createdAt:'desc'},include:{user:{select:{id:true,name:true,email:true,role:true}}}}),
+ db.booking.findMany({where:userId?{OR:[{studentId:userId},{tutorId:userId}]}:{},orderBy:{startUtc:'desc'},include:{student:{select:{id:true,name:true}},tutor:{select:{id:true,name:true}},subject:{select:{name:true}},packagePurchase:{select:{name:true,couponCode:true,discountCents:true}}}}),
+ db.groupEnrollment.findMany({where:userId?{OR:[{studentId:userId},{group:{tutorId:userId}}]}:{},include:{group:true}}),
+ db.packagePurchase.findMany({where:userId?{studentId:userId}:{},orderBy:{createdAt:'desc'}}),
+ db.user.aggregate({where:userId?{id:userId}:{},_sum:{walletCents:true}}),
+ db.payoutRequest.findMany({where:userId?{tutor:{userId}}:{},orderBy:{createdAt:'desc'}})
+ ])
+ const relatedPurchaseIds=userId?[...new Set([...bookings.filter(b=>b.tutorId===userId).map(b=>b.packagePurchaseId),...groups.filter(g=>g.group.tutorId===userId).map(g=>g.packagePurchaseId)].filter((id):id is string=>!!id))]:[];
+ const relatedPurchases=relatedPurchaseIds.length?await db.packagePurchase.findMany({where:{id:{in:relatedPurchaseIds}}}):[];
+ const combinedPurchases=[...new Map([...purchases,...relatedPurchases].map(p=>[p.id,p])).values()];
+ const relatedRefs=userId?[...bookings.filter(b=>b.tutorId===userId).map(b=>b.id),...groups.filter(g=>g.group.tutorId===userId).map(g=>'group:'+g.id),...relatedPurchaseIds.map(id=>'package:'+id)]:[];
+ const relatedPayments=relatedRefs.length?await db.payment.findMany({where:{refId:{in:relatedRefs}},orderBy:{createdAt:'desc'},include:{user:{select:{id:true,name:true,email:true,role:true}}}}):[];
+ const combinedPayments=[...new Map([...payments,...relatedPayments].map(p=>[p.id,p])).values()].sort((a,b)=>+b.createdAt-+a.createdAt);
+ const groupTeachers=await db.user.findMany({where:{id:{in:[...new Set(groups.map(g=>g.group.tutorId))]}},select:{id:true,name:true}});
+ const purchaseDetails=combinedPurchases.map(p=>({...p,lessons:[...bookings.filter(b=>b.packagePurchaseId===p.id).map(b=>({teacher:b.tutor.name,startUtc:b.startUtc,title:b.subject?.name||'Private lesson'})),...groups.filter(e=>e.packagePurchaseId===p.id).map(e=>({teacher:groupTeachers.find(t=>t.id===e.group.tutorId)?.name||'Teacher',startUtc:e.group.startUtc,title:e.group.title}))]}));
+ const settledGroups=[...new Map(groups.filter(g=>g.group.settledAt).map(g=>[g.groupId,g.group])).values()];
+ const seen=new Set<string>();const enriched=combinedPayments.map(p=>{const b=bookings.find(b=>b.id===p.refId),g=groups.find(g=>'group:'+g.id===p.refId),pkg=purchaseDetails.find(v=>'package:'+v.id===p.refId);const key=p.refId?`${p.userId}:${p.purpose}:${p.refId}:${p.method}:${p.status}`:p.id;const duplicate=seen.has(key);seen.add(key);return{...p,duplicate,lesson:b?{id:b.id,startUtc:b.startUtc,teacher:b.tutor.name,teacherId:b.tutorId,student:b.student.name,subject:b.subject?.name||'Lesson',coupon:b.packagePurchase?.couponCode?b.packagePurchase.couponCode+' (package)':b.couponRecorded?(b.couponCode||'None'):'Not recorded',discountCents:b.couponDiscountCents,package:b.packagePurchase?.name}:g?{id:g.id,startUtc:g.group.startUtc,teacherId:g.group.tutorId,teacher:bookings.find(v=>v.tutorId===g.group.tutorId)?.tutor.name||'',student:'',subject:g.group.title,coupon:'Not recorded',discountCents:0}:null,package:pkg||null}})
+ const sum=(rows:typeof enriched)=>rows.filter(p=>!p.duplicate&&p.status==='SUCCEEDED'&&(!userId||p.userId===userId)).reduce((s,p)=>s+p.amountCents,0)
+ return{payments:enriched,entries,bookings,groups,purchases,payouts,totals:{walletCents:balances._sum.walletCents||0,cashReceivedCents:sum(enriched.filter(p=>!['WALLET','CREDIT','NONE','EXTERNAL'].includes(p.method))),walletUsedCents:sum(enriched.filter(p=>p.method==='WALLET')),packageCreditUsedCents:sum(enriched.filter(p=>p.method==='CREDIT')),promotionalCreditCents:entries.filter(e=>e.fundingSource==='PROMOTIONAL'&&e.amountCents>0).reduce((s,e)=>s+e.amountCents,0),commissionCents:bookings.filter(b=>b.status==='COMPLETED').reduce((s,b)=>s+b.commissionCents,0)+settledGroups.reduce((s,g)=>s+g.commissionCents,0),earnedCents:entries.filter(e=>e.type==='EARNING').reduce((s,e)=>s+e.amountCents,0),spentCents:entries.filter(e=>['SPEND','PACKAGE'].includes(e.type)).reduce((s,e)=>s-e.amountCents,0),refundsCents:entries.filter(e=>e.type==='REFUND').reduce((s,e)=>s+e.amountCents,0),pendingPayoutsCents:payouts.filter(p=>['REQUESTED','APPROVED'].includes(p.status)).reduce((s,p)=>s+p.amountCents,0),payoutsCents:payouts.filter(p=>p.status==='PAID').reduce((s,p)=>s+p.amountCents,0)}}
+}

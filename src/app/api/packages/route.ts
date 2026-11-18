@@ -1,0 +1,7 @@
+import{NextRequest}from'next/server'
+import{handle,ok,fail}from'@/lib/api'
+import{catalog}from'@/lib/package-service'
+import{db}from'@/lib/db'
+import{requireUser,getAuthUser}from'@/lib/auth'
+export async function GET(req:NextRequest){return handle(async()=>{const p=req.nextUrl.searchParams;if(p.has('packageId')){await requireUser(req,['STUDENT']);const product=await db.package.findFirst({where:{id:p.get('packageId')!,active:true}});if(!product)return fail(404,'Package not found');const code=p.get('couponCode')?.trim().toUpperCase();const coupon=code?await db.coupon.findUnique({where:{code}}):null;if(code&&(!coupon||!coupon.active||coupon.usedCount>=coupon.maxUses||coupon.expiresAt&&+coupon.expiresAt<Date.now()))return fail(400,'Coupon is not available');const discountCents=coupon?Math.round(product.priceCents*coupon.percentOff/100):0;return ok({totalCents:product.priceCents-discountCents,discountCents})}const packages=await catalog();const user=await getAuthUser(req);if(user?.role==='STUDENT'){const owned=await db.lessonCredit.findMany({where:{studentId:user.id,remaining:{gt:0}},include:{package:true,purchase:true}});for(const credit of owned){if(!credit.package)continue;let product=packages.find(p=>p.id===credit.packageId);if(!product){product={...credit.package,teachers:[],classes:[]};packages.push(product)}}}return ok({packages})})}
+export async function POST(req:NextRequest){void req;return fail(400,'Select your weekly lessons before purchasing a package')}

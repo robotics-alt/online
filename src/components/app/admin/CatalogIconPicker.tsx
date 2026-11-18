@@ -1,0 +1,13 @@
+'use client';
+import { uiText } from "@/lib/ui-text";
+import { useState } from 'react';
+import { catalogIconOptions, CatalogIcon } from '../CatalogIcon';
+import { Input } from '@/components/ui/input';
+export default function CatalogIconPicker({ value, onChange }: {
+    value: string;
+    onChange: (name: string) => void;
+}) {
+    const [search, setSearch] = useState(''), [group, setGroup] = useState('All');
+    const selected = catalogIconOptions.find(icon => icon.name === value), shown = catalogIconOptions.filter(icon => (group === 'All' || icon.group === group) && `${icon.label} ${icon.group}`.toLowerCase().includes(search.toLowerCase()));
+    return <div className="space-y-4" aria-label={uiText("Category and subject icon picker")}><div className="flex items-center gap-4 rounded-2xl border bg-primary/5 p-4"><CatalogIcon name={value} className="size-14 shrink-0 text-primary"/><div><strong className="block">{selected?.label || uiText("Book Open")}</strong><span className="text-sm text-muted-foreground">{uiText("Selected icon \u00B7 100 icons available")}</span></div></div><Input aria-label={uiText("Search icons")} placeholder={uiText("Search icons, e.g. music, science, school\u2026")} value={search} onChange={e => setSearch(e.target.value)}/><div className="flex flex-wrap gap-2" aria-label={uiText("Icon groups")}>{uiText(['All', 'Learning', 'Science', 'Technology', 'Creative', 'World'].map(name => <button type="button" key={name} aria-pressed={group === name} onClick={() => setGroup(name)} className={`rounded-full border px-3 py-1.5 text-xs font-medium ${group === name ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>{name}</button>))}</div><div className="grid max-h-80 grid-cols-4 gap-2 overflow-y-auto p-1 sm:grid-cols-5">{shown.map(icon => <button type="button" key={icon.name} title={uiText(icon.label)} aria-label={uiText("Select {{value1}} icon", { value1: icon.label })} aria-pressed={value === icon.name} onClick={() => onChange(icon.name)} className={`flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl border p-2 transition ${value === icon.name ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary' : 'hover:border-primary/50 hover:bg-muted'}`}><icon.Icon className="size-8 shrink-0" strokeWidth={1.8}/><span className="w-full truncate text-center text-[10px]">{uiText(icon.label)}</span></button>)}</div>{!shown.length && <p className="p-4 text-center text-sm text-muted-foreground">{uiText("No matching icons. Try another search.")}</p>}<p className="text-xs text-muted-foreground">{uiText(shown.length)}{uiText(" icons shown")}</p></div>;
+}
